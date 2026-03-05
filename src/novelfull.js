@@ -1,122 +1,109 @@
-const BASE_URL = "https://novelfull.net";
-const client = new Client();
+const mangayomiSources = [{
+  name: "NovelFull",
+  lang: "en",
+  baseUrl: "https://novelfull.net",
+  apiUrl: "",
+  iconUrl: "https://novelfull.net/favicon.ico",
+  typeSource: "single",
+  itemType: 2,          // novels
+  version: "0.0.1",
+  dateFormat: "",
+  dateFormatLocale: "",
+  isNsfw: false,
+  hasCloudflare: false,
+  notes: ""
+}];
 
-async function parseNovelList(html) {
-    const document = new Document(html);
-    const novels = [];
+class DefaultExtension extends MProvider {
+  headers = {
+    Referer: this.source.baseUrl,
+    Origin: this.source.baseUrl,
+    "User-Agent": "Mozilla/5.0"
+  };
 
-    const items = document.select(".list-truyen .row");
+  // Browse / Popular
+  async getPopular(page) {
+    // TODO: replace selectors once you confirm NovelFull's HTML
+    const url = `${this.source.baseUrl}/genre/all/${page}`;
+    const res = await new Client().get(url, this.headers);
 
-    for (const item of items) {
-        const a = item.selectFirst("h3.truyen-title a");
+    const doc = new Document(res.body);
 
-        novels.push({
-            name: a.text.trim(),
-            url: a.attr("href"),
-            link: a.attr("href")
-        });
-    }
+    // IMPORTANT: return { list: [...], hasNextPage: true/false }
+    const list = doc.select(".list-novel .row").map((el) => {
+      const a = el.selectFirst("h3 a");
+      return {
+        name: a?.text?.trim() ?? "",
+        link: a?.getHref ?? ""
+      };
+    }).filter(x => x.name && x.link);
 
-    return novels;
-}
+    const hasNextPage = list.length > 0; // crude; improve later
+    return { list, hasNextPage };
+  }
 
-async function getPopular(page) {
-    const res = await client.get(`${BASE_URL}/most-popular?page=${page}`);
-    const novels = await parseNovelList(res.body);
+  // Latest
+  async getLatestUpdates(page) {
+    return this.getPopular(page); // placeholder
+  }
 
-    return {
-        list: novels,
-        hasNextPage: novels.length > 0
-    };
-}
+  // Search
+  async search(query, page, filters) {
+    const url = `${this.source.baseUrl}/search?keyword=${encodeURIComponent(query)}&page=${page}`;
+    const res = await new Client().get(url, this.headers);
+    const doc = new Document(res.body);
 
-async function getLatest(page) {
-    const res = await client.get(`${BASE_URL}/latest-release-novel?page=${page}`);
-    const novels = await parseNovelList(res.body);
+    const list = doc.select(".list-novel .row").map((el) => {
+      const a = el.selectFirst("h3 a");
+      return { name: a?.text?.trim() ?? "", link: a?.getHref ?? "" };
+    }).filter(x => x.name && x.link);
 
-    return {
-        list: novels,
-        hasNextPage: novels.length > 0
-    };
-}
+    const hasNextPage = list.length > 0;
+    return { list, hasNextPage };
+  }
 
-async function search(query, page) {
-    const res = await client.get(`${BASE_URL}/search?keyword=${encodeURIComponent(query)}&page=${page}`);
-    const novels = await parseNovelList(res.body);
+  // Details
+  async getDetail(url) {
+    const res = await new Client().get(url, this.headers);
+    const doc = new Document(res.body);
 
-    return {
-        list: novels,
-        hasNextPage: novels.length > 0
-    };
-}
+    const title = doc.selectFirst("h3.title")?.text?.trim() ?? "";
+    const description = doc.selectFirst(".desc-text")?.text?.trim() ?? "";
+    const author = doc.selectFirst(".info a[href*='/author/']")?.text?.trim() ?? "";
+    const genre = doc.select(".info a[href*='/genre/']").map(e => e.text.trim());
 
-async function getDetail(url) {
-    const res = await client.get(url);
-    const document = new Document(res.body);
-
-    const title = document.selectFirst(".title").text.trim();
-    const description = document.selectFirst("#tab-description").text.trim();
-
-    const genres = [];
-    const genreElements = document.select(".info a[href*='/genre/']");
-    for (const g of genreElements) {
-        genres.push(g.text.trim());
-    }
-
-    let status = 5;
-    const statusText = document.selectFirst(".info").text.toLowerCase();
-    if (statusText.includes("ongoing")) status = 0;
-    if (statusText.includes("completed")) status = 1;
-
-    const chapterElements = document.select("#list-chapter li a");
-    const chapters = [];
-
-    for (const ch of chapterElements) {
-        chapters.push({
-            name: ch.text.trim(),
-            url: ch.attr("href"),
-            scanlator: "",
-            dateUpload: null
-        });
-    }
-
-    chapters.reverse();
+    // chapters
+    const chapters = doc.select("#list-chapter a").map((a) => ({
+      name: a.text.trim(),
+      url: a.getHref,
+      scanlator: "",
+      dateUpload: null
+    }));
 
     return {
-        title,
-        description,
-        genre: genres,
-        status,
-        chapters
+      title,
+      description,
+      author,
+      artist: "",
+      genre,
+      status: 5,
+      imageUrl: doc.selectFirst(".book img")?.getSrc ?? "",
+      chapters
     };
+  }
+
+  // Chapter text/pages (for novels you usually return an array of "pages" as strings)
+  async getPageList(chapterUrl) {
+    const res = await new Client().get(chapterUrl, this.headers);
+    const doc = new Document(res.body);
+
+    // Try common containers; adjust after inspecting HTML
+    const content =
+      doc.selectFirst("#chapter-content")?.text ??
+      doc.selectFirst(".chapter-content")?.text ??
+      "";
+
+    // Mangayomi accepts array of strings
+    return [content.trim()];
+  }
 }
-
-async function getPageList(url) {
-    const res = await client.get(url);
-    const document = new Document(res.body);
-
-    const content = document.selectFirst("#chapter-content");
-
-    let html = content.html.replaceAll("<br>", "\n");
-
-    const page =
-`<html>
-<body style="font-family: serif; padding: 20px; line-height: 1.6;">
-${html}
-</body>
-</html>`;
-
-    return [
-        {
-            url: "data:text/html," + encodeURIComponent(page)
-        }
-    ];
-}
-
-const source = {
-    getPopular,
-    getLatest,
-    search,
-    getDetail,
-    getPageList
-};
