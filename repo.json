@@ -1,0 +1,13 @@
+{
+  "name": "The Mysterious Ouch's Extensions <3",
+  "sources": [
+    {
+      "name": "NovelFull",
+      "lang": "en",
+      "baseUrl": "https://novelfull.net",
+      "iconUrl": "https://novelfull.net/favicon.ico",
+      "version": 1,
+      "file": "src/novelfull.js"
+    }
+  ]
+}
